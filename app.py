@@ -1,19 +1,30 @@
-﻿import streamlit as st
+import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
 
-# 設定網頁標題與手機版面配置
+# 設定網頁標題
 st.set_page_config(page_title="信用卡優惠快查", layout="centered")
 
-# --- 核心資料與邏輯 ---
+# --- 1. 建立固定的 2026 優惠資料庫 (避免重置後變空白) ---
+# 這些資料會作為網頁開啟時的預設內容
+INITIAL_DATA = {
+    "國泰世華 CUBE卡": [
+        {"scheme": "玩數位", "rate": "3%", "merchants": ["ChatGPT", "Canva", "Apple", "Google Play", "Netflix", "Spotify", "蝦皮購物", "momo購物網", "PChome", "Coupang", "酷澎", "淘寶", "天貓"]},
+        {"scheme": "樂饗購", "rate": "3%", "merchants": ["遠東SOGO", "新光三越", "遠東百貨", "台北101", "微風", "誠品", "Uber Eats", "foodpanda", "麥當勞", "康是美", "屈臣氏", "50嵐", "麻古茶坊"]},
+        {"scheme": "集精選", "rate": "2%", "merchants": ["家樂福", "全聯", "中油直營", "7-ELEVEN", "7-11", "全家", "IKEA"]}
+    ],
+    "台新 Richart卡": [
+        {"scheme": "Pay著刷", "rate": "3.8%", "merchants": ["台新Pay", "新光三越", "7-11", "全家", "康是美", "IKEA"]},
+        {"scheme": "天天刷/好饗刷", "rate": "3.3%", "merchants": ["家樂福", "大買家", "高鐵", "台灣大車隊", "Uber", "寶雅", "屈臣氏", "全臺餐飲", "Uber Eats", "foodpanda", "中油直營", "台亞加油", "全國加油"]}
+    ],
+    "玉山 Unicard": [
+        {"scheme": "百大特店(訂閱制)", "rate": "4.5%", "merchants": ["LINE Pay", "街口支付", "全支付", "悠遊付", "momo購物網", "蝦皮購物", "酷澎", "Coupang", "新光三越", "家樂福", "特力屋", "星宇航空", "中華航空", "長榮航空", "Klook", "KKday", "Tesla", "特斯拉"]}
+    ]
+}
+
+# 初始化 session_state
 if 'cards_db' not in st.session_state:
-    # 預設資料（作為備份）
-    st.session_state.cards_db = {
-        "國泰世華 CUBE卡": [{"scheme": "一般消費", "rate": "0.3%", "merchants": ["所有店家"]}],
-        "台新 Richart卡": [{"scheme": "一般消費", "rate": "0.3%", "merchants": ["所有店家"]}],
-        "玉山 Unicard": [{"scheme": "一般消費", "rate": "0.3%", "merchants": ["所有店家"]}]
-    }
+    st.session_state.cards_db = INITIAL_DATA
 
 if 'urls' not in st.session_state:
     st.session_state.urls = {
@@ -22,64 +33,45 @@ if 'urls' not in st.session_state:
         "玉山 Unicard": "https://event.esunbank.com.tw/credit/unicard/discount-channel.html"
     }
 
-# --- 爬蟲更新函數 ---
+# --- 2. 爬蟲更新函數 (保持結構) ---
 def update_benefit(card_name, url):
-    headers = {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1'}
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status()
-        
-        # 這裡根據網頁結構模擬解析（實務上可根據 bs4 抓取特定標籤）
-        # 為了展示功能，這裡預設回傳抓取到的部分關鍵字
-        if "cathay" in url:
-            return [{"scheme": "玩數位/樂饗購", "rate": "3%", "merchants": ["蝦皮", "momo", "Uber Eats", "新光三越", "星宇"]}]
-        elif "taishin" in url:
-            return [{"scheme": "天天刷/好饗刷", "rate": "3.3% - 3.8%", "merchants": ["全家", "7-11", "中油", "星宇", "Klook"]}]
-        elif "esun" in url:
-            return [{"scheme": "百大特店", "rate": "4.5%", "merchants": ["LINE Pay", "街口", "酷澎", "星宇", "Netflix"]}]
-        
-    except Exception as e:
-        return None
+    # 這裡可以保留之前的爬蟲邏輯，但建議先手動維護 INITIAL_DATA 較穩定
+    # 因為銀行網頁有防爬蟲機制，Streamlit Server 的 IP 常會被擋
+    st.warning(f"正在嘗試更新 {card_name}，若失敗請檢查網址或稍後再試。")
+    return INITIAL_DATA.get(card_name) # 暫時回傳內建資料作為範例
 
-# --- UI 介面 ---
+# --- 3. UI 介面 ---
 st.title("💳 信用卡優惠快查 (2026)")
-st.caption("輸入店家名稱，快速比較 CUBE / Richart / Unicard 回饋")
+st.info("💡 提示：輸入店家或支付名稱，例如：『中油』、『蝦皮』、『LINE Pay』")
 
-# 分成兩個分頁：搜尋與設定
-tab1, tab2 = st.tabs(["🔍 快速搜尋", "⚙️ 更新與設定"])
+tab1, tab2 = st.tabs(["🔍 快速搜尋", "⚙️ 更新網址"])
 
 with tab1:
-    keyword = st.text_input("想在哪裡消費？", placeholder="例如：蝦皮、星宇、中油...")
+    keyword = st.text_input("📍 我要在哪裡消費？", placeholder="輸入店家名稱...", key="search_input")
     
     if keyword:
-        found = False
+        results_found = False
+        # 建立搜尋結果清單
         for card, benefits in st.session_state.cards_db.items():
             for b in benefits:
+                # 模糊比對
                 matched = [m for m in b['merchants'] if keyword.lower() in m.lower()]
                 if matched:
-                    with st.expander(f"✅ {card}：{b['rate']}", expanded=True):
-                        st.write(f"**適用方案：** {b['scheme']}")
-                        st.write(f"**匹配項目：** {', '.join(matched)}")
-                    found = True
-        if not found:
-            st.warning(f"查無 '{keyword}' 的加碼回饋，建議使用一般消費。")
+                    with st.container():
+                        st.markdown(f"### {card} | **{b['rate']}**")
+                        st.write(f"🔹 **適用方案：** {b['scheme']}")
+                        st.write(f"🔹 **匹配到：** {', '.join(matched)}")
+                        st.divider()
+                    results_found = True
+        
+        if not results_found:
+            st.error(f"查無 '{keyword}' 的加碼回饋，建議使用一般消費。")
 
 with tab2:
-    st.subheader("連線狀態檢查")
+    st.subheader("🔗 銀行優惠網址管理")
     for card_name, url in st.session_state.urls.items():
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.session_state.urls[card_name] = st.text_input(f"{card_name} 網址", value=url)
-        with col2:
-            if st.button(f"更新", key=card_name):
-                with st.spinner('同步中...'):
-                    new_data = update_benefit(card_name, st.session_state.urls[card_name])
-                    if new_data:
-                        st.session_state.cards_db[card_name] = new_data
-                        st.success("更新成功！")
-                    else:
-                        st.error("更新失敗，請檢查網址或網路。")
-
-    if st.button("🚀 全部強制同步 (Auto Update)"):
-        st.info("正在連線各銀行伺服器並解析 HTML 結構...")
-        # 批次執行 update_benefit 邏輯...
+        st.session_state.urls[card_name] = st.text_input(f"{card_name}", value=url)
+    
+    if st.button("🔄 立即同步最新資料"):
+        # 這裡會重新跑一遍爬蟲邏輯
+        st.toast("功能開發中：目前將維持內建優惠資料")
